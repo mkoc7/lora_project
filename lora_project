@@ -1,0 +1,71 @@
+# LoRA (Low-Rank Adaptation - Düşük Dereceli Uyarlama) ile LLM modeli ince ayarlama örneği
+# Bu kod, önceden eğitilmiş büyük bir modeli küçük veri setiyle verimli şekilde özelleştirir
+import torch  # PyTorch derin öğrenme kütüphanesi - tensör işlemleri için kullanılır
+from datasets import load_dataset  # Hugging Face veri seti yükleme aracı - hazır veri setleri için
+from transformers import (
+    AutoModelForCausalLM,  # Metinsel çıktı üreten otomatik model sınıfı
+    AutoTokenizer,  # Metin tokenization işlemlerini yapan sınıf
+    TrainingArguments,  # Eğitim parametrelerini toplu halde tutan sınıf
+    Trainer  # Model eğitimini kolaylaştıran yüksek seviye API
+)
+from peft import (
+    LoraConfig,  # LoRA konfigürasyonu için gerekli sınıf
+    get_peft_model,  # Modeli PEFT yöntemine göre düzenleyen fonksiyon
+    prepare_model_for_kbit_training  # Düşük bitli eğitime hazırlayan fonksiyon
+)
+
+# Modeli ve tokenizer'ı yükle
+model_name = "meta-llama/Llama-2-7b-hf"  # LLaMA-2 7B parametreli model
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    torch_dtype=torch.float16,  # 16-bit hassasiyet kullanarak bellek tasarrufu sağlanır
+    device_map="auto"  # GPU'yu otomatik kullan - birden fazla GPU varsa otomatik dağıtım yapılır
+)
+
+# LoRA konfigürasyonu - modelin sadece küçük bir kısmını güncelleyerek verimlilik sağlar
+lora_config = LoraConfig(
+    r=16,  # LoRA matrisleri için rank - düşük rank yaklaşımı için boyut
+    lora_alpha=32,  # LoRA ölçekleme faktörü - uyarlamanın etki büyüklüğünü kontrol eder
+    target_modules=["q_proj", "v_proj"],  # Güncellenecek katmanlar - attention modülündeki belirli matrisler
+    lora_dropout=0.05,  # LoRA katmanlarında kullanılacak dropout oranı - aşırı öğrenmeyi engeller
+    bias="none",  # Bias'ları güncelleme stratejisi - eğitilecek parametre sayısını azaltır
+    task_type="CAUSAL_LM"  # Görev türü - nedensel dil modelleme (metin üretme) görevi
+)
+
+# Modeli ince ayar için hazırla
+model = prepare_model_for_kbit_training(model)  # Kuantize model için hazırlık - düşük bitli işlemler
+model = get_peft_model(model, lora_config)  # LoRA'yı modele uygula - PEFT yaklaşımı entegrasyonu
+
+# Özel veri seti yükle
+dataset = load_dataset("json", data_files="ozel_veri.json")  # Yerel JSON formatında veri seti
+
+# Eğitim argümanlarını tanımla
+training_args = TrainingArguments(
+    output_dir="./ince_ayarli_model",  # Modelin kaydedileceği dizin - çıktı klasörü
+    num_train_epochs=3,  # Eğitim döngüsü sayısı - veri setinin kaç kez işleneceği
+    per_device_train_batch_size=4,  # GPU başına batch boyutu - bellek kullanımını etkiler
+    gradient_accumulation_steps=8,  # Bellek tasarrufu için gradyan biriktirme adımları
+    learning_rate=2e-4,  # Öğrenme oranı - model parametrelerinin ne kadar hızlı güncelleneceği
+    fp16=True,  # Yarı hassasiyette eğitim - eğitimi hızlandırır
+    save_steps=200,  # Her 200 adımda bir model kaydedilir - kontrol noktaları
+    logging_steps=50,  # Logları her 50 adımda bir göster - ilerleme takibi için
+)
+
+# Trainer nesnesini oluştur ve eğitimi başlat
+# Not: Gerçek uygulamada bu kısım doldurulmalıdır
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=dataset["train"],
+    tokenizer=tokenizer,
+)
+
+# Eğitimi başlat
+trainer.train()
+
+# İnce ayarlanmış modeli kaydet
+model.save_pretrained("./son_model")
+tokenizer.save_pretrained("./son_model")
+
+print("Model başarıyla eğitildi ve kaydedildi!")
